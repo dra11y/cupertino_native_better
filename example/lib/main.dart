@@ -39,6 +39,7 @@ import 'demos/pr42_tabbar_iconsize_customicon_test.dart';
 import 'demos/issue33_svg_tabbar_test.dart';
 import 'demos/stack_positioned_tabbar_test.dart';
 import 'demos/tabbar_split_search_clip_test.dart';
+import 'demos/alert.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -738,6 +739,21 @@ class HomePage extends StatelessWidget {
                     CupertinoPageRoute(
                       builder: (_) => const BottomNavCustomIconsTestPage(),
                     ),
+                  );
+                },
+              ),
+              CupertinoListTile(
+                title: Text('Alert'),
+                leading: CNIcon(
+                  symbol: CNSymbol(
+                    'exclamationmark.bubble',
+                    color: accentColor,
+                  ),
+                ),
+                trailing: CupertinoListTileChevron(),
+                onTap: () {
+                  Navigator.of(context).push(
+                    CupertinoPageRoute(builder: (_) => const AlertDemoPage()),
                   );
                 },
               ),
