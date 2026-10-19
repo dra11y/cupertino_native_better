@@ -121,9 +121,11 @@ final class CNNativeTabBarManager: NSObject {
         // no native list can host the app's real Flutter content. In modal mode
         // the Flutter VC stays the root, so those tabs show a placeholder.
         let flutterVC: UIViewController? = config.asRoot ? findFlutterVC(keyWindow()?.rootViewController) : nil
+        let overlay = flutterVC != nil && config.tabs.allSatisfy { ($0.listItems ?? []).isEmpty && !$0.isSearch }
         let view = CNMinimizingTabView(
             store: store,
             flutterVC: flutterVC,
+            flutterOverlay: overlay,
             onEvent: { [weak self] name, payload in
                 self?.channel?.invokeMethod(name, arguments: payload)
             },
@@ -143,7 +145,10 @@ final class CNNativeTabBarManager: NSObject {
             self.hostController = host
             self.previousRoot = window.rootViewController  // strong: keep it alive
             self.presentedAsRoot = true
-            UIView.transition(with: window, duration: 0.3, options: .transitionCrossDissolve) {
+            if overlay, let flutterVC {
+                host.view.backgroundColor = .clear
+                window.rootViewController = CNFlutterOverlayRootController(flutterVC: flutterVC, tabHost: host)
+            } else {
                 window.rootViewController = host
             }
         } else {
@@ -335,6 +340,7 @@ struct CNMinimizingTabView: View {
     /// The app's Flutter VC, embedded in tabs that have no native list
     /// (root mode only; nil in modal mode).
     let flutterVC: UIViewController?
+    let flutterOverlay: Bool
     let onEvent: (String, [String: Any]?) -> Void
     let onClose: () -> Void
 
@@ -403,6 +409,8 @@ struct CNMinimizingTabView: View {
                 .navigationTitle(tab.title)
                 .toolbar { closeToolbar() }
             }
+        } else if flutterOverlay {
+            Color.clear
         } else if let flutterVC {
             // Host the app's real Flutter content full-bleed (root mode).
             CNFlutterContainer(flutterVC: flutterVC)
@@ -555,6 +563,58 @@ struct CNFlutterContainer: UIViewControllerRepresentable {
     }
 }
 
+final class CNFlutterOverlayRootController: UIViewController {
+    private let flutterVC: UIViewController
+    private let tabHost: UIViewController
+
+    init(flutterVC: UIViewController, tabHost: UIViewController) {
+        self.flutterVC = flutterVC
+        self.tabHost = tabHost
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        flutterVC.willMove(toParent: nil)
+        flutterVC.view.removeFromSuperview()
+        flutterVC.removeFromParent()
+        addChild(tabHost)
+        tabHost.view.frame = view.bounds
+        tabHost.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(tabHost.view)
+        tabHost.didMove(toParent: self)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard flutterVC.parent == nil else { return }
+        guard let tbc = findTabBarController(tabHost) else {
+            NSLog("❌ CNNativeTabBarManager: no UITabBarController for Flutter overlay")
+            return
+        }
+        let container: UIView = tbc.view
+        var barLayer: UIView = tbc.tabBar
+        while let sup = barLayer.superview, sup !== container { barLayer = sup }
+        tbc.addChild(flutterVC)
+        flutterVC.view.frame = container.bounds
+        flutterVC.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.insertSubview(flutterVC.view, belowSubview: barLayer)
+        flutterVC.didMove(toParent: tbc)
+        flutterVC.beginAppearanceTransition(true, animated: false)
+        flutterVC.endAppearanceTransition()
+    }
+
+    private func findTabBarController(_ vc: UIViewController) -> UITabBarController? {
+        if let t = vc as? UITabBarController { return t }
+        for c in vc.children {
+            if let f = findTabBarController(c) { return f }
+        }
+        return nil
+    }
+}
+
 /// Hosts the shared Flutter VC as a child, moving it into whichever tab is
 /// currently visible. Plain UIViewController (no iOS-26 types).
 final class CNFlutterHostController: UIViewController {
@@ -575,6 +635,14 @@ final class CNFlutterHostController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         attachChildIfNeeded()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if child.parent === self {
+            child.beginAppearanceTransition(true, animated: false)
+            child.endAppearanceTransition()
+        }
     }
 
     func attachChildIfNeeded() {
